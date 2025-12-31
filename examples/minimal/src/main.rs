@@ -6,9 +6,7 @@ use ratzilla::ratatui::{
     widgets::{Block, Paragraph},
 };
 
-use ratzilla::{
-    event::KeyCode, event::MouseButton, event::MouseEventKind, WebRenderer,
-};
+use ratzilla::{event::KeyCode, event::MouseButton, event::MouseEventKind, WebRenderer};
 
 use examples_shared::backend::{BackendType, MultiBackendBuilder};
 use ratzilla::backend::webgl2::WebGl2BackendOptions;
@@ -20,9 +18,10 @@ fn main() -> io::Result<()> {
     let mouse_event_kind = Rc::new(RefCell::new(None::<MouseEventKind>));
 
     let terminal = MultiBackendBuilder::with_fallback(BackendType::Dom)
-        .webgl2_options(WebGl2BackendOptions::new()
-            .enable_console_debug_api()
-            .enable_mouse_selection()
+        .webgl2_options(
+            WebGl2BackendOptions::new()
+                .enable_console_debug_api()
+                .enable_mouse_selection(),
         )
         .build_terminal()?;
 
