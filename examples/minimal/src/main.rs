@@ -16,6 +16,7 @@ fn main() -> io::Result<()> {
     let mouse_position = Rc::new(RefCell::new((0, 0)));
     let mouse_button = Rc::new(RefCell::new(None::<MouseButton>));
     let mouse_event_kind = Rc::new(RefCell::new(None::<MouseEventKind>));
+    let scroll_count = Rc::new(RefCell::new(0i32));
 
     let terminal = MultiBackendBuilder::with_fallback(BackendType::Dom)
         .webgl2_options(
@@ -49,11 +50,28 @@ fn main() -> io::Result<()> {
         }
     });
 
+    terminal.on_wheel_event({
+        let scroll_count_cloned = scroll_count.clone();
+        move |mouse_event| {
+            let mut scroll_count = scroll_count_cloned.borrow_mut();
+            match mouse_event.event {
+                MouseEventKind::ScrolledVertical(delta) => {
+                    *scroll_count += delta.to_steps();
+                }
+                MouseEventKind::ScrolledHorizontal(delta) => {
+                    *scroll_count += delta.to_steps();
+                }
+                _ => {}
+            }
+        }
+    });
+
     terminal.draw_web(move |f| {
         let counter = counter.borrow();
         let mouse_position = mouse_position.borrow();
         let mouse_button = mouse_button.borrow();
         let mouse_event_kind = mouse_event_kind.borrow();
+        let scroll_count = scroll_count.borrow();
 
         f.render_widget(
             Paragraph::new(format!(
@@ -61,7 +79,8 @@ fn main() -> io::Result<()> {
                 MouseX: {:?}\n\
                 MouseY: {:?}\n\
                 MouseButton: {mouse_button:?}\n\
-                MouseEvent: {mouse_event_kind:?}",
+                MouseEvent: {mouse_event_kind:?}\n\
+                Scroll wheel steps: {scroll_count}",
                 mouse_position.0, mouse_position.1
             ))
             .alignment(Alignment::Center)

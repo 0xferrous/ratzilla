@@ -3,40 +3,7 @@ use ratatui::{
     prelude::{Color, Modifier},
 };
 
-/// Converts a [`Color`] to an 24-bit RGB value, with a fallback for reset colors.
-pub(super) fn to_rgb(color: Color, reset_fallback_rgb: u32) -> u32 {
-    match color {
-        Color::Rgb(r, g, b) => ((r as u32) << 16) | ((g as u32) << 8) | b as u32,
-        Color::Reset => reset_fallback_rgb,
-        Color::Black => 0x000000,
-        Color::Red => 0x800000,
-        Color::Green => 0x008000,
-        Color::Yellow => 0x808000,
-        Color::Blue => 0x000080,
-        Color::Magenta => 0x800080,
-        Color::Cyan => 0x008080,
-        Color::Gray => 0xc0c0c0,
-        Color::DarkGray => 0x808080,
-        Color::LightRed => 0xFF0000,
-        Color::LightGreen => 0x00FF00,
-        Color::LightYellow => 0xFFFF00,
-        Color::LightBlue => 0x0000FF,
-        Color::LightMagenta => 0xFF00FF,
-        Color::LightCyan => 0x00FFFF,
-        Color::White => 0xFFFFFF,
-        Color::Indexed(code) => indexed_color_to_rgb(code),
-    }
-}
-
-/// Converts an ANSI color to an RGB tuple.
-pub(super) fn ansi_to_rgb(color: Color) -> Option<(u8, u8, u8)> {
-    if let Color::Reset = color {
-        None // Reset does not map to RGB
-    } else {
-        let rgb = to_rgb(color, 0x000000).to_ne_bytes();
-        Some((rgb[2], rgb[1], rgb[0]))
-    }
-}
+use super::theme::Theme;
 
 /// Returns the actual foreground color of a cell, considering the `REVERSED` modifier.
 pub(super) fn actual_fg_color(cell: &Cell) -> Color {
@@ -56,68 +23,12 @@ pub(super) fn actual_bg_color(cell: &Cell) -> Color {
     }
 }
 
-/// Converts an indexed color (0-255) to an RGB value.
-fn indexed_color_to_rgb(index: u8) -> u32 {
-    match index {
-        // Basic 16 colors (0-15)
-        0..=15 => {
-            const BASIC_COLORS: [u32; 16] = [
-                0x000000, // 0: black
-                0xCD0000, // 1: red
-                0x00CD00, // 2: green
-                0xCDCD00, // 3: yellow
-                0x0000EE, // 4: blue
-                0xCD00CD, // 5: magenta
-                0x00CDCD, // 6: cyan
-                0xE5E5E5, // 7: white
-                0x7F7F7F, // 8: bright Black
-                0xFF0000, // 9: bright Red
-                0x00FF00, // 10: bright Green
-                0xFFFF00, // 11: bright Yellow
-                0x5C5CFF, // 12: bright Blue
-                0xFF00FF, // 13: bright Magenta
-                0x00FFFF, // 14: bright Cyan
-                0xFFFFFF, // 15: bright White
-            ];
-            BASIC_COLORS[index as usize]
-        }
-
-        // 216-color cube (16-231)
-        16..=231 => {
-            let cube_index = index - 16;
-            let r = cube_index / 36;
-            let g = (cube_index % 36) / 6;
-            let b = cube_index % 6;
-
-            // Convert 0-5 range to 0-255 RGB
-            // Values: 0 -> 0, 1 -> 95, 2 -> 135, 3 -> 175, 4 -> 215, 5 -> 255
-            let to_rgb = |n: u8| -> u32 {
-                if n == 0 {
-                    0
-                } else {
-                    55 + 40 * n as u32
-                }
-            };
-
-            to_rgb(r) << 16 | to_rgb(g) << 8 | to_rgb(b)
-        }
-
-        // 24 grayscale colors (232-255)
-        232..=255 => {
-            let gray_index = index - 232;
-            // linear interpolation from 8 to 238
-            let gray = (8 + gray_index * 10) as u32;
-            (gray << 16) | (gray << 8) | gray
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_indexed_to_rgb() {
+    fn test_indexed_to_rgb_with_default_theme() {
         // colors from https://github.com/joejulian/xterm/blob/master/256colres.h
         const INDEXED_COLORS: [u32; 256] = [
             0x000000, 0xCD0000, 0x00CD00, 0xCDCD00, 0x0000EE, 0xCD00CD, 0x00CDCD, 0xE5E5E5,
@@ -154,26 +65,59 @@ mod tests {
             0xa8a8a8, 0xb2b2b2, 0xbcbcbc, 0xc6c6c6, 0xd0d0d0, 0xdadada, 0xe4e4e4, 0xeeeeee,
         ];
 
+        let theme = Theme::default();
         INDEXED_COLORS
             .iter()
             .enumerate()
             .for_each(|(i, indexed_color)| {
-                assert_eq!(*indexed_color, to_rgb(Color::Indexed(i as u8), 0x000000),)
+                assert_eq!(
+                    *indexed_color,
+                    theme.to_rgb(Color::Indexed(i as u8), true).as_u32()
+                )
             });
     }
 
     #[test]
-    fn test_ansi_to_rgb() {
-        // Test some basic ANSI colors
-        assert_eq!(ansi_to_rgb(Color::LightRed), Some((255, 0, 0)));
-        assert_eq!(ansi_to_rgb(Color::Green), Some((0, 128, 0)));
-        assert_eq!(ansi_to_rgb(Color::LightBlue), Some((0, 0, 255)));
+    fn test_to_rgb_with_theme() {
+        let theme = Theme::builder()
+            .palette_color(1, Color::Rgb(255, 100, 100))
+            .foreground(Color::Rgb(200, 200, 200))
+            .background(Color::Rgb(10, 10, 10))
+            .build();
 
-        // Reset should return None
-        assert_eq!(ansi_to_rgb(Color::Reset), None);
+        // Test themed palette color
+        let rgb = theme.to_rgb(Color::Red, true);
+        assert_eq!(rgb.as_u32(), 0xFF6464);
 
-        // Test indexed colors
-        assert_eq!(ansi_to_rgb(Color::Indexed(1)), Some((205, 0, 0)));
-        assert_eq!(ansi_to_rgb(Color::Indexed(68)), Some((0x5f, 0x87, 0xd7)));
+        // Test reset fallback for foreground
+        let fg = theme.to_rgb(Color::Reset, true);
+        assert_eq!(fg.as_u32(), 0xC8C8C8);
+
+        // Test reset fallback for background
+        let bg = theme.to_rgb(Color::Reset, false);
+        assert_eq!(bg.as_u32(), 0x0A0A0A);
+
+        // Test RGB color passes through
+        let rgb = theme.to_rgb(Color::Rgb(50, 100, 150), true);
+        assert_eq!(rgb.as_u32(), 0x326496);
+    }
+
+    #[test]
+    fn test_indexed_colors_with_theme() {
+        let theme = Theme::builder()
+            .palette_color(5, Color::Rgb(255, 0, 255))
+            .build();
+
+        // Palette colors use theme
+        let rgb = theme.to_rgb(Color::Indexed(5), true);
+        assert_eq!(rgb.as_u32(), 0xFF00FF);
+
+        // Colors 16+ remain algorithmic
+        let rgb = theme.to_rgb(Color::Indexed(68), true);
+        assert_eq!(rgb.as_u32(), 0x5F87D7); // Standard xterm color
+
+        // Grayscale colors remain algorithmic
+        let rgb = theme.to_rgb(Color::Indexed(232), true);
+        assert_eq!(rgb.as_u32(), 0x080808);
     }
 }

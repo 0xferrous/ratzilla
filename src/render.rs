@@ -1,6 +1,6 @@
 use ratatui::{prelude::Backend, Frame, Terminal};
 use std::{cell::RefCell, rc::Rc};
-use web_sys::{wasm_bindgen::prelude::*, window};
+use web_sys::{console, wasm_bindgen::prelude::*, window};
 
 use crate::event::{KeyEvent, MouseEvent};
 
@@ -61,6 +61,30 @@ pub trait WebRenderer {
             .unwrap();
         document
             .add_event_listener_with_callback("mouseup", closure.as_ref().unchecked_ref())
+            .unwrap();
+        closure.forget();
+    }
+
+    /// Handles wheel events.
+    ///
+    /// This method takes a closure that will be called on every `wheel` event.
+    fn on_wheel_event<F>(&self, mut callback: F)
+    where
+        F: FnMut(MouseEvent) + 'static,
+    {
+        let closure = Closure::<dyn FnMut(_)>::new(move |event: web_sys::WheelEvent| {
+            callback(event.into());
+        });
+        let window = window().unwrap();
+        let document = window.document().unwrap();
+        document
+            .add_event_listener_with_callback("wheel", closure.as_ref().unchecked_ref())
+            .inspect_err(|err| {
+                console::error_1(&JsValue::from(&format!(
+                    "error listening for wheel events :{:?}",
+                    err
+                )))
+            })
             .unwrap();
         closure.forget();
     }

@@ -2,7 +2,7 @@ use crate::{fps, utils::inject_backend_footer};
 use ratzilla::{
     backend::{canvas::CanvasBackendOptions, dom::DomBackendOptions, webgl2::WebGl2BackendOptions},
     ratatui::{backend::Backend, prelude::backend::ClearType, Terminal, TerminalOptions},
-    CanvasBackend, DomBackend, WebGl2Backend,
+    CanvasBackend, DomBackend, Theme, WebGl2Backend,
 };
 use std::{convert::TryFrom, fmt, io};
 use web_sys::{window, Url};
@@ -301,6 +301,7 @@ pub struct MultiBackendBuilder {
     canvas_options: CanvasBackendOptions,
     dom_options: DomBackendOptions,
     webgl2_options: WebGl2BackendOptions,
+    theme: Option<Theme>,
 }
 
 impl MultiBackendBuilder {
@@ -349,6 +350,33 @@ impl MultiBackendBuilder {
         self
     }
 
+    /// Set the color theme for all backends.
+    ///
+    /// This theme will be applied to whichever backend is selected (DOM, Canvas, or WebGL2).
+    /// The theme controls the 16 ANSI color palette, default foreground/background colors,
+    /// cursor colors, and selection colors.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ratzilla::Theme;
+    /// use ratatui::style::Color;
+    ///
+    /// let theme = Theme::builder()
+    ///     .palette_color(1, Color::Rgb(255, 100, 100))
+    ///     .foreground(Color::Rgb(200, 200, 200))
+    ///     .background(Color::Rgb(10, 10, 10))
+    ///     .build();
+    ///
+    /// let terminal = MultiBackendBuilder::with_fallback(BackendType::WebGl2)
+    ///     .theme(theme)
+    ///     .build_terminal()?;
+    /// ```
+    pub fn theme(mut self, theme: Theme) -> Self {
+        self.theme = Some(theme);
+        self
+    }
+
     /// Build the terminal with the configured options and backend selection.
     ///
     /// This method:
@@ -380,11 +408,31 @@ impl MultiBackendBuilder {
     /// ```
     pub fn build_terminal(self) -> io::Result<Terminal<FpsTrackingBackend>> {
         let backend_type = parse_backend_from_url(self.default_backend);
+
+        // Apply theme to backend options if provided
+        let dom_options = if let Some(ref theme) = self.theme {
+            self.dom_options.theme(theme.clone())
+        } else {
+            self.dom_options
+        };
+
+        let canvas_options = if let Some(ref theme) = self.theme {
+            self.canvas_options.theme(theme.clone())
+        } else {
+            self.canvas_options
+        };
+
+        let webgl2_options = if let Some(theme) = self.theme {
+            self.webgl2_options.theme(theme)
+        } else {
+            self.webgl2_options
+        };
+
         let backend = create_backend_with_options(
             backend_type,
-            Some(self.dom_options),
-            Some(self.canvas_options),
-            Some(self.webgl2_options),
+            Some(dom_options),
+            Some(canvas_options),
+            Some(webgl2_options),
         )?;
 
         // Initialize FPS recorder

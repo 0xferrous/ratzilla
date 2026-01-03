@@ -46,6 +46,8 @@ pub struct CanvasBackendOptions {
     /// this option may cause some performance issues when dealing with large
     /// numbers of simultaneous changes.
     always_clip_cells: bool,
+    /// The color theme.
+    theme: super::theme::Theme,
 }
 
 impl CanvasBackendOptions {
@@ -65,6 +67,17 @@ impl CanvasBackendOptions {
         self.size = Some(size);
         self
     }
+
+    /// Sets the color theme.
+    pub fn theme(mut self, theme: super::theme::Theme) -> Self {
+        self.theme = theme;
+        self
+    }
+
+    /// Returns the theme.
+    pub(crate) fn get_theme(&self) -> &super::theme::Theme {
+        &self.theme
+    }
 }
 
 /// Canvas renderer.
@@ -74,18 +87,11 @@ struct Canvas {
     inner: web_sys::HtmlCanvasElement,
     /// Rendering context.
     context: web_sys::CanvasRenderingContext2d,
-    /// Background color.
-    background_color: Color,
 }
 
 impl Canvas {
     /// Constructs a new [`Canvas`].
-    fn new(
-        parent_element: web_sys::Element,
-        width: u32,
-        height: u32,
-        background_color: Color,
-    ) -> Result<Self, Error> {
+    fn new(parent_element: web_sys::Element, width: u32, height: u32) -> Result<Self, Error> {
         let canvas = create_canvas_in_element(&parent_element, width, height)?;
 
         let context_options = Map::new();
@@ -105,7 +111,6 @@ impl Canvas {
         Ok(Self {
             inner: canvas,
             context,
-            background_color,
         })
     }
 }
@@ -136,6 +141,8 @@ pub struct CanvasBackend {
     cursor_shape: CursorShape,
     /// Draw cell boundaries with specified color.
     debug_mode: Option<String>,
+    /// Color theme.
+    theme: super::theme::Theme,
 }
 
 impl CanvasBackend {
@@ -162,9 +169,10 @@ impl CanvasBackend {
             .size
             .unwrap_or_else(|| (parent.client_width() as u32, parent.client_height() as u32));
 
-        let canvas = Canvas::new(parent, width, height, Color::Black)?;
+        let canvas = Canvas::new(parent, width, height)?;
         let buffer = get_sized_buffer_from_canvas(&canvas.inner);
         let changed_cells = bitvec![0; buffer.len() * buffer[0].len()];
+        let theme = options.get_theme().clone();
         Ok(Self {
             prev_buffer: buffer.clone(),
             always_clip_cells: options.always_clip_cells,
@@ -175,12 +183,19 @@ impl CanvasBackend {
             cursor_position: None,
             cursor_shape: CursorShape::SteadyBlock,
             debug_mode: None,
+            theme,
         })
     }
 
     /// Sets the background color of the canvas.
-    pub fn set_background_color(&mut self, color: Color) {
-        self.canvas.background_color = color;
+    ///
+    /// **Deprecated**: Use `CanvasBackendOptions::theme()` instead to set colors via theme.
+    #[deprecated(
+        note = "use CanvasBackendOptions::theme() to set colors via theme",
+        since = "0.4.0"
+    )]
+    pub fn set_background_color(&mut self, _color: Color) {
+        // No-op: background color is now controlled by theme
     }
 
     /// Returns the [`CursorShape`].
@@ -306,7 +321,7 @@ impl CanvasBackend {
                     self.canvas.context.clip();
 
                     last_color = None; // reset last color to avoid clipping
-                    let color = get_canvas_color(color, Color::White);
+                    let color = get_canvas_color_with_theme(color, &self.theme, true);
                     self.canvas.context.set_fill_style_str(&color);
                 } else if last_color != Some(color) {
                     self.canvas.context.restore();
@@ -314,7 +329,7 @@ impl CanvasBackend {
 
                     last_color = Some(color);
 
-                    let color = get_canvas_color(color, Color::White);
+                    let color = get_canvas_color_with_theme(color, &self.theme, true);
                     self.canvas.context.set_fill_style_str(&color);
                 }
 
@@ -344,7 +359,7 @@ impl CanvasBackend {
         self.canvas.context.save();
 
         let draw_region = |(rect, color): (Rect, Color)| {
-            let color = get_canvas_color(color, self.canvas.background_color);
+            let color = get_canvas_color_with_theme(color, &self.theme, false);
 
             self.canvas.context.set_fill_style_str(&color);
             self.canvas.context.fill_rect(

@@ -1,9 +1,4 @@
-use crate::{
-    backend::{color::to_rgb, utils::*},
-    error::Error,
-    widgets::hyperlink::HYPERLINK_MODIFIER,
-    CursorShape,
-};
+use crate::{backend::utils::*, error::Error, widgets::hyperlink::HYPERLINK_MODIFIER, CursorShape};
 pub use beamterm_renderer::SelectionMode;
 use beamterm_renderer::{mouse::*, select, CellData, GlyphEffect, Terminal as Beamterm, Terminal};
 use bitvec::prelude::BitVec;
@@ -26,6 +21,28 @@ use web_sys::{wasm_bindgen::JsCast, window, Element};
 /// Re-export beamterm's atlas data type. Used by [`WebGl2BackendOptions::font_atlas`].
 pub use beamterm_renderer::FontAtlasData;
 
+/// Font atlas configuration.
+#[derive(Debug)]
+pub enum FontAtlasConfig {
+    /// Static pre-generated font atlas.
+    Static(FontAtlasData),
+    /// Dynamic font atlas with runtime font selection.
+    ///
+    /// The tuple contains: (font_family, font_size)
+    Dynamic(Vec<String>, f32),
+}
+
+impl FontAtlasConfig {
+    /// Constructs a new [`FontAtlasConfig::Dynamic`]. The font family string should be
+    /// the same as the font family name in the CSS font-family property.
+    pub fn dynamic(font_family: &[&str], font_size: f32) -> Self {
+        Self::Dynamic(
+            font_family.iter().map(|s| s.to_string()).collect(),
+            font_size,
+        )
+    }
+}
+
 // Labels used by the Performance API
 const SYNC_TERMINAL_BUFFER_MARK: &str = "sync-terminal-buffer";
 const WEBGL_RENDER_MARK: &str = "webgl-render";
@@ -41,8 +58,8 @@ pub struct WebGl2BackendOptions {
     size: Option<(u32, u32)>,
     /// Fallback glyph to use for characters not in the font atlas.
     fallback_glyph: Option<CompactString>,
-    /// Override the default font atlas.
-    font_atlas: Option<FontAtlasData>,
+    /// Font atlas configuration (static or dynamic).
+    font_atlas_config: Option<FontAtlasConfig>,
     /// The canvas padding color.
     canvas_padding_color: Option<Color>,
     /// The cursor shape.
@@ -55,6 +72,8 @@ pub struct WebGl2BackendOptions {
     measure_performance: bool,
     /// Enable console debugging and introspection API.
     console_debug_api: bool,
+    /// The color theme.
+    theme: super::theme::Theme,
 }
 
 impl WebGl2BackendOptions {
@@ -104,9 +123,41 @@ impl WebGl2BackendOptions {
         self
     }
 
-    /// Sets a custom font atlas to use for rendering.
-    pub fn font_atlas(mut self, atlas: FontAtlasData) -> Self {
-        self.font_atlas = Some(atlas);
+    /// Sets a custom static font atlas to use for rendering.
+    ///
+    /// Static atlases are pre-generated using the beamterm-atlas CLI tool and
+    /// loaded from binary .atlas files.
+    #[deprecated(
+        note = "use `font_atlas_config(FontAtlasConfig::Static(atlas))` instead",
+        since = "0.3.0"
+    )]
+    pub fn font_atlas(self, atlas: FontAtlasData) -> Self {
+        self.font_atlas_config(FontAtlasConfig::Static(atlas))
+    }
+
+    /// Sets a custom font atlas configuration (static or dynamic).
+    /// Defaults to the static font atlas that ships with beamterm.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use ratzilla::backend::webgl2::{WebGl2BackendOptions, FontAtlasConfig};
+    /// use ratzilla::backend::webgl2::FontAtlasData;
+    ///
+    /// // Static atlas
+    /// let options = WebGl2BackendOptions::new()
+    ///     .font_atlas_config(FontAtlasConfig::Static(FontAtlasData::default()));
+    ///
+    /// // Dynamic atlas
+    /// let options = WebGl2BackendOptions::new()
+    ///     .font_atlas_config(FontAtlasConfig::dynamic(
+    ///         // monospace is an implicit fallback font in browsers
+    ///         &["JetBrains Mono"],
+    ///         16.0
+    ///     ));
+    /// ```
+    pub fn font_atlas_config(mut self, config: FontAtlasConfig) -> Self {
+        self.font_atlas_config = Some(config);
         self
     }
 
@@ -151,11 +202,11 @@ impl WebGl2BackendOptions {
         self
     }
 
-    /// Gets the canvas padding color, defaulting to black if not set.
+    /// Gets the canvas padding color, defaulting to theme background if not set.
     fn get_canvas_padding_color(&self) -> u32 {
         self.canvas_padding_color
-            .map(|c| to_rgb(c, 0x000000))
-            .unwrap_or(0x000000)
+            .map(|c| self.theme.to_rgb(c, false).as_u32())
+            .unwrap_or_else(|| self.theme.default_bg().as_u32())
     }
 
     /// Enables debug API during terminal creation.
@@ -164,6 +215,17 @@ impl WebGl2BackendOptions {
     pub fn enable_console_debug_api(mut self) -> Self {
         self.console_debug_api = true;
         self
+    }
+
+    /// Sets the color theme.
+    pub fn theme(mut self, theme: super::theme::Theme) -> Self {
+        self.theme = theme;
+        self
+    }
+
+    /// Returns the theme.
+    pub(crate) fn get_theme(&self) -> &super::theme::Theme {
+        &self.theme
     }
 }
 
@@ -237,7 +299,7 @@ pub struct WebGl2Backend {
     /// Hyperlink tracking.
     hyperlink_cells: Option<Rc<RefCell<BitVec>>>,
     /// Mouse handler for hyperlink clicks.
-    hyperlink_mouse_handler: Option<TerminalMouseHandler>,
+    _hyperlink_mouse_handler: Option<TerminalMouseHandler>,
     /// Current cursor state over hyperlinks (shared with mouse handler).
     cursor_over_hyperlink: Option<Rc<RefCell<bool>>>,
     /// Hyperlink click callback.
@@ -312,7 +374,7 @@ impl WebGl2Backend {
             cursor_position: None,
             options,
             hyperlink_cells,
-            hyperlink_mouse_handler,
+            _hyperlink_mouse_handler: hyperlink_mouse_handler,
             performance,
             cursor_over_hyperlink,
             _hyperlink_callback: hyperlink_callback,
@@ -341,12 +403,6 @@ impl WebGl2Backend {
 
         // resize the terminal grid and viewport
         self.beamterm.resize(size_px.0, size_px.1)?;
-
-        // Update mouse handler dimensions if it exists
-        if let Some(mouse_handler) = &mut self.hyperlink_mouse_handler {
-            let (cols, rows) = self.beamterm.terminal_size();
-            mouse_handler.update_dimensions(cols, rows);
-        }
 
         // clear any hyperlink cells; we'll get them in the next draw call
         if let Some(hyperlink_cells) = &mut self.hyperlink_cells {
@@ -409,11 +465,13 @@ impl WebGl2Backend {
                 let is_hyperlink = c.modifier.contains(HYPERLINK_MODIFIER);
                 hyperlink_cells.set(idx, is_hyperlink);
             });
-            let cells = cells.map(|(x, y, cell)| (x, y, cell_data(cell)));
+            let theme = self.options.get_theme();
+            let cells = cells.map(|(x, y, cell)| (x, y, cell_data_with_theme(cell, theme)));
 
             self.beamterm.update_cells_by_position(cells)
         } else {
-            let cells = content.map(|(x, y, cell)| (x, y, cell_data(cell)));
+            let theme = self.options.get_theme();
+            let cells = content.map(|(x, y, cell)| (x, y, cell_data_with_theme(cell, theme)));
             self.beamterm.update_cells_by_position(cells)
         }
         .map_err(Error::from)?;
@@ -594,13 +652,26 @@ impl WebGl2Backend {
 
         let canvas = create_canvas_in_element(parent, width, height)?;
 
-        let beamterm = Beamterm::builder(canvas)
+        let mut beamterm = Beamterm::builder(canvas)
             .canvas_padding_color(options.get_canvas_padding_color())
-            .fallback_glyph(options.fallback_glyph.as_ref().unwrap_or(&" ".into()))
-            .font_atlas(options.font_atlas.take().unwrap_or_default());
+            .fallback_glyph(options.fallback_glyph.as_ref().unwrap_or(&" ".into()));
+
+        // Configure font atlas (static or dynamic)
+        beamterm = match options.font_atlas_config.take() {
+            Some(FontAtlasConfig::Dynamic(font_family, font_size)) => {
+                let font_family_refs: Vec<&str> = font_family.iter().map(|s| s.as_str()).collect();
+                beamterm.dynamic_font_atlas(&font_family_refs, font_size)
+            }
+            Some(FontAtlasConfig::Static(atlas)) => beamterm.font_atlas(atlas),
+            None => beamterm.font_atlas(FontAtlasData::default()),
+        };
 
         let beamterm = if let Some(mode) = options.mouse_selection_mode {
-            beamterm.default_mouse_input_handler(mode, true)
+            beamterm.mouse_selection_handler(
+                MouseSelectOptions::new()
+                    .selection_mode(mode)
+                    .trim_trailing_whitespace(true),
+            )
         } else {
             beamterm
         };
@@ -661,10 +732,15 @@ impl Backend for WebGl2Backend {
     }
 
     fn clear(&mut self) -> IoResult<()> {
-        let cells = [CellData::new_with_style_bits(" ", 0, 0xffffff, 0x000000)]
-            .into_iter()
-            .cycle()
-            .take(self.beamterm.cell_count());
+        let theme = self.options.get_theme();
+        let default_fg = theme.default_fg().as_u32();
+        let default_bg = theme.default_bg().as_u32();
+        let cells = [CellData::new_with_style_bits(
+            " ", 0, default_fg, default_bg,
+        )]
+        .into_iter()
+        .cycle()
+        .take(self.beamterm.cell_count());
 
         self.beamterm.update_cells(cells).map_err(Error::from)?;
 
@@ -790,21 +866,21 @@ fn find_hyperlink_bounds(
     Some((link_start, link_end))
 }
 
-/// Resolves foreground and background colors for a [`Cell`].
-fn resolve_fg_bg_colors(cell: &Cell) -> (u32, u32) {
-    let mut fg = to_rgb(cell.fg, 0xffffff);
-    let mut bg = to_rgb(cell.bg, 0x000000);
+/// Resolves foreground and background colors for a [`Cell`] using theme.
+fn resolve_fg_bg_colors_with_theme(cell: &Cell, theme: &super::theme::Theme) -> (u32, u32) {
+    let mut fg = theme.to_rgb(cell.fg, true);
+    let mut bg = theme.to_rgb(cell.bg, false);
 
     if cell.modifier.contains(Modifier::REVERSED) {
         swap(&mut fg, &mut bg);
     }
 
-    (fg, bg)
+    (fg.as_u32(), bg.as_u32())
 }
 
-/// Converts a [`Cell`] into a [`CellData`] for the beamterm renderer.
-fn cell_data(cell: &Cell) -> CellData<'_> {
-    let (fg, bg) = resolve_fg_bg_colors(cell);
+/// Converts a [`Cell`] into a [`CellData`] for the beamterm renderer, using theme.
+fn cell_data_with_theme<'a>(cell: &'a Cell, theme: &super::theme::Theme) -> CellData<'a> {
+    let (fg, bg) = resolve_fg_bg_colors_with_theme(cell, theme);
     CellData::new_with_style_bits(cell.symbol(), into_glyph_bits(cell.modifier), fg, bg)
 }
 
