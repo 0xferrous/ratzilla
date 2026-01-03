@@ -1,3 +1,5 @@
+use web_sys::{console, wasm_bindgen::JsValue};
+
 /// A key event.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct KeyEvent {
@@ -267,6 +269,16 @@ impl From<web_sys::WheelEvent> for MouseEvent {
 
         let scroll_x = to_scroll_delta(delta_x);
         let scroll_y = to_scroll_delta(delta_y);
+
+        console::log_1(&JsValue::from(&format!(
+            "Scroll delta: {:?} {:?}",
+            scroll_x, scroll_y
+        )));
+        console::log_1(&JsValue::from(&format!(
+            "Scroll delta steps: {:?} {:?}",
+            scroll_x.to_steps(),
+            scroll_y.to_steps()
+        )));
 
         // Determine the event kind based on which delta is larger
         // Compare normalized steps to determine primary scroll direction

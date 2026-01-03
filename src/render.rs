@@ -1,6 +1,6 @@
 use ratatui::{prelude::Backend, Frame, Terminal};
 use std::{cell::RefCell, rc::Rc};
-use web_sys::{wasm_bindgen::prelude::*, window};
+use web_sys::{console, wasm_bindgen::prelude::*, window};
 
 use crate::event::{KeyEvent, MouseEvent};
 
@@ -79,6 +79,12 @@ pub trait WebRenderer {
         let document = window.document().unwrap();
         document
             .add_event_listener_with_callback("wheel", closure.as_ref().unchecked_ref())
+            .inspect_err(|err| {
+                console::error_1(&JsValue::from(&format!(
+                    "error listening for wheel events :{:?}",
+                    err
+                )))
+            })
             .unwrap();
         closure.forget();
     }
