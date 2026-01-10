@@ -48,6 +48,10 @@ pub mod webgl2;
 
 /// Color handling.
 mod color;
+
+/// Terminal color themes.
+pub mod theme;
+
 /// Backend utilities.
 pub(crate) mod utils;
 

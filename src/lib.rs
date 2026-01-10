@@ -29,6 +29,7 @@ pub use backend::{
     canvas::CanvasBackend,
     cursor::CursorShape,
     dom::DomBackend,
+    theme::Theme,
     webgl2::{SelectionMode, WebGl2Backend},
 };
 pub use render::WebRenderer;

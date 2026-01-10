@@ -26,6 +26,8 @@ pub struct DomBackendOptions {
     grid_id: Option<String>,
     /// The cursor shape.
     cursor_shape: CursorShape,
+    /// The color theme.
+    theme: super::theme::Theme,
 }
 
 impl DomBackendOptions {
@@ -34,6 +36,7 @@ impl DomBackendOptions {
         Self {
             grid_id,
             cursor_shape,
+            theme: super::theme::Theme::default(),
         }
     }
 
@@ -52,6 +55,17 @@ impl DomBackendOptions {
     /// Returns the [`CursorShape`].
     pub fn cursor_shape(&self) -> &CursorShape {
         &self.cursor_shape
+    }
+
+    /// Sets the color theme.
+    pub fn theme(mut self, theme: super::theme::Theme) -> Self {
+        self.theme = theme;
+        self
+    }
+
+    /// Returns the theme.
+    pub(crate) fn get_theme(&self) -> &super::theme::Theme {
+        &self.theme
     }
 }
 
@@ -216,8 +230,11 @@ impl Backend for DomBackend {
             let elem = &self.cells[cell_position];
 
             elem.set_inner_html(cell.symbol());
-            elem.set_attribute("style", &get_cell_style_as_css(cell))
-                .map_err(Error::from)?;
+            elem.set_attribute(
+                "style",
+                &get_cell_style_as_css_with_theme(cell, self.options.get_theme()),
+            )
+            .map_err(Error::from)?;
 
             // don't display the next cell if a fullwidth glyph preceeds it
             if cell.symbol().len() > 1 && cell.symbol().width() == 2 {
@@ -225,7 +242,13 @@ impl Backend for DomBackend {
                     let next_elem = &self.cells[cell_position + 1];
                     next_elem.set_inner_html("");
                     next_elem
-                        .set_attribute("style", &get_cell_style_as_css(&Cell::new("")))
+                        .set_attribute(
+                            "style",
+                            &get_cell_style_as_css_with_theme(
+                                &Cell::new(""),
+                                self.options.get_theme(),
+                            ),
+                        )
                         .map_err(Error::from)?;
                 }
             }

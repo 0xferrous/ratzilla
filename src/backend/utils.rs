@@ -1,5 +1,5 @@
 use crate::{
-    backend::color::ansi_to_rgb,
+    backend::theme::Theme,
     error::Error,
     utils::{get_screen_size, get_window_size, is_mobile},
 };
@@ -20,32 +20,45 @@ pub struct CssAttribute {
     pub value: Option<&'static str>,
 }
 
-/// Creates a new `<span>` element with the given cell.
-pub(crate) fn create_span(document: &Document, cell: &Cell) -> Result<Element, Error> {
+/// Creates a new `<span>` element with the given cell, using the provided theme.
+pub(crate) fn create_span_with_theme(
+    document: &Document,
+    cell: &Cell,
+    theme: &Theme,
+) -> Result<Element, Error> {
     let span = document.create_element("span")?;
     span.set_inner_html(cell.symbol());
 
-    let style = get_cell_style_as_css(cell);
+    let style = get_cell_style_as_css_with_theme(cell, theme);
     span.set_attribute("style", &style)?;
     Ok(span)
 }
 
+/// Creates a new `<span>` element with the given cell (legacy version using default theme).
+pub(crate) fn create_span(document: &Document, cell: &Cell) -> Result<Element, Error> {
+    create_span_with_theme(document, cell, &Theme::default())
+}
+
 /// Creates a new `<a>` element with the given cells.
 #[allow(dead_code)]
-pub(crate) fn create_anchor(document: &Document, cells: &[Cell]) -> Result<Element, Error> {
+pub(crate) fn create_anchor(
+    document: &Document,
+    cells: &[Cell],
+    theme: &Theme,
+) -> Result<Element, Error> {
     let anchor = document.create_element("a")?;
     anchor.set_attribute(
         "href",
         &cells.iter().map(|c| c.symbol()).collect::<String>(),
     )?;
-    anchor.set_attribute("style", &get_cell_style_as_css(&cells[0]))?;
+    anchor.set_attribute("style", &get_cell_style_as_css_with_theme(&cells[0], theme))?;
     Ok(anchor)
 }
 
-/// Converts a cell to a CSS style.
-pub(crate) fn get_cell_style_as_css(cell: &Cell) -> String {
-    let mut fg = ansi_to_rgb(cell.fg);
-    let mut bg = ansi_to_rgb(cell.bg);
+/// Converts a cell to a CSS style using the provided theme.
+pub(crate) fn get_cell_style_as_css_with_theme(cell: &Cell, theme: &Theme) -> String {
+    let mut fg = ansi_to_rgb_with_theme(cell.fg, theme, true);
+    let mut bg = ansi_to_rgb_with_theme(cell.bg, theme, false);
 
     if cell.modifier.contains(Modifier::REVERSED) {
         std::mem::swap(&mut fg, &mut bg);
@@ -183,11 +196,38 @@ pub(crate) fn update_css_field(attribute: CssAttribute, elem: &Element) -> Resul
     set_or_remove_style_attribute(elem, updated_css)
 }
 
-/// Converts a Color to a CSS style.
-pub(crate) fn get_canvas_color(color: Color, fallback_color: Color) -> CompactString {
-    let color = ansi_to_rgb(color).unwrap_or_else(|| ansi_to_rgb(fallback_color).unwrap());
+/// Converts a Color to RGB using theme.
+fn ansi_to_rgb_with_theme(
+    color: Color,
+    theme: &Theme,
+    is_foreground: bool,
+) -> Option<(u8, u8, u8)> {
+    if let Color::Reset = color {
+        let rgb = if is_foreground {
+            theme.default_fg()
+        } else {
+            theme.default_bg()
+        };
+        // Handle transparent background case for DOM
+        if !is_foreground && rgb.as_u32() == 0x000000 {
+            return None; // transparent
+        }
+        let bytes = rgb.as_u32().to_ne_bytes();
+        Some((bytes[2], bytes[1], bytes[0]))
+    } else {
+        let rgb = theme.to_rgb(color, is_foreground).as_u32().to_ne_bytes();
+        Some((rgb[2], rgb[1], rgb[0]))
+    }
+}
 
-    format_compact!("rgb({}, {}, {})", color.0, color.1, color.2)
+/// Converts a Color to a CSS rgb() string using theme.
+pub(crate) fn get_canvas_color_with_theme(
+    color: Color,
+    theme: &Theme,
+    is_foreground: bool,
+) -> CompactString {
+    let rgb = theme.to_rgb(color, is_foreground).as_u32().to_ne_bytes();
+    format_compact!("rgb({}, {}, {})", rgb[2], rgb[1], rgb[0])
 }
 
 /// Calculates the number of pixels that can fit in the window.

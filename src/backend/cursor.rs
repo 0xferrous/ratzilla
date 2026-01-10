@@ -1,6 +1,8 @@
 use crate::backend::utils::CssAttribute;
 use ratatui::style::Style;
 
+use super::theme::RgbColor;
+
 /// Supported cursor shapes.
 #[derive(Debug, Default)]
 pub enum CursorShape {
@@ -47,6 +49,33 @@ impl CursorShape {
                 field: "text-decoration",
                 value: None,
             },
+        }
+    }
+
+    /// Transforms the given style to show the cursor, optionally using theme cursor colors.
+    ///
+    /// If theme colors are provided (as 0xRRGGBB u32 values), they will be used for the cursor appearance.
+    /// Otherwise, falls back to the REVERSED or UNDERLINED modifier.
+    pub(crate) fn show_with_colors(
+        &self,
+        style: Style,
+        cursor_bg: Option<u32>,
+        cursor_fg: Option<u32>,
+    ) -> Style {
+        match self {
+            CursorShape::SteadyBlock => {
+                if let (Some(bg), Some(fg)) = (cursor_bg, cursor_fg) {
+                    // Use theme cursor colors
+                    style
+                        .bg(RgbColor::from_u32(bg).to_color())
+                        .fg(RgbColor::from_u32(fg).to_color())
+                } else {
+                    // Fallback to reversed
+                    style.reversed()
+                }
+            }
+            CursorShape::SteadyUnderScore => style.underlined(),
+            CursorShape::None => style,
         }
     }
 }

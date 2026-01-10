@@ -1,9 +1,4 @@
-use crate::{
-    backend::{color::to_rgb, utils::*},
-    error::Error,
-    widgets::hyperlink::HYPERLINK_MODIFIER,
-    CursorShape,
-};
+use crate::{backend::utils::*, error::Error, widgets::hyperlink::HYPERLINK_MODIFIER, CursorShape};
 pub use beamterm_renderer::SelectionMode;
 use beamterm_renderer::{mouse::*, select, CellData, GlyphEffect, Terminal as Beamterm, Terminal};
 use bitvec::prelude::BitVec;
@@ -55,6 +50,8 @@ pub struct WebGl2BackendOptions {
     measure_performance: bool,
     /// Enable console debugging and introspection API.
     console_debug_api: bool,
+    /// The color theme.
+    theme: super::theme::Theme,
 }
 
 impl WebGl2BackendOptions {
@@ -151,11 +148,11 @@ impl WebGl2BackendOptions {
         self
     }
 
-    /// Gets the canvas padding color, defaulting to black if not set.
+    /// Gets the canvas padding color, defaulting to theme background if not set.
     fn get_canvas_padding_color(&self) -> u32 {
         self.canvas_padding_color
-            .map(|c| to_rgb(c, 0x000000))
-            .unwrap_or(0x000000)
+            .map(|c| self.theme.to_rgb(c, false).as_u32())
+            .unwrap_or_else(|| self.theme.default_bg().as_u32())
     }
 
     /// Enables debug API during terminal creation.
@@ -164,6 +161,17 @@ impl WebGl2BackendOptions {
     pub fn enable_console_debug_api(mut self) -> Self {
         self.console_debug_api = true;
         self
+    }
+
+    /// Sets the color theme.
+    pub fn theme(mut self, theme: super::theme::Theme) -> Self {
+        self.theme = theme;
+        self
+    }
+
+    /// Returns the theme.
+    pub(crate) fn get_theme(&self) -> &super::theme::Theme {
+        &self.theme
     }
 }
 
@@ -409,11 +417,13 @@ impl WebGl2Backend {
                 let is_hyperlink = c.modifier.contains(HYPERLINK_MODIFIER);
                 hyperlink_cells.set(idx, is_hyperlink);
             });
-            let cells = cells.map(|(x, y, cell)| (x, y, cell_data(cell)));
+            let theme = self.options.get_theme();
+            let cells = cells.map(|(x, y, cell)| (x, y, cell_data_with_theme(cell, theme)));
 
             self.beamterm.update_cells_by_position(cells)
         } else {
-            let cells = content.map(|(x, y, cell)| (x, y, cell_data(cell)));
+            let theme = self.options.get_theme();
+            let cells = content.map(|(x, y, cell)| (x, y, cell_data_with_theme(cell, theme)));
             self.beamterm.update_cells_by_position(cells)
         }
         .map_err(Error::from)?;
@@ -661,10 +671,15 @@ impl Backend for WebGl2Backend {
     }
 
     fn clear(&mut self) -> IoResult<()> {
-        let cells = [CellData::new_with_style_bits(" ", 0, 0xffffff, 0x000000)]
-            .into_iter()
-            .cycle()
-            .take(self.beamterm.cell_count());
+        let theme = self.options.get_theme();
+        let default_fg = theme.default_fg().as_u32();
+        let default_bg = theme.default_bg().as_u32();
+        let cells = [CellData::new_with_style_bits(
+            " ", 0, default_fg, default_bg,
+        )]
+        .into_iter()
+        .cycle()
+        .take(self.beamterm.cell_count());
 
         self.beamterm.update_cells(cells).map_err(Error::from)?;
 
@@ -790,21 +805,21 @@ fn find_hyperlink_bounds(
     Some((link_start, link_end))
 }
 
-/// Resolves foreground and background colors for a [`Cell`].
-fn resolve_fg_bg_colors(cell: &Cell) -> (u32, u32) {
-    let mut fg = to_rgb(cell.fg, 0xffffff);
-    let mut bg = to_rgb(cell.bg, 0x000000);
+/// Resolves foreground and background colors for a [`Cell`] using theme.
+fn resolve_fg_bg_colors_with_theme(cell: &Cell, theme: &super::theme::Theme) -> (u32, u32) {
+    let mut fg = theme.to_rgb(cell.fg, true);
+    let mut bg = theme.to_rgb(cell.bg, false);
 
     if cell.modifier.contains(Modifier::REVERSED) {
         swap(&mut fg, &mut bg);
     }
 
-    (fg, bg)
+    (fg.as_u32(), bg.as_u32())
 }
 
-/// Converts a [`Cell`] into a [`CellData`] for the beamterm renderer.
-fn cell_data(cell: &Cell) -> CellData<'_> {
-    let (fg, bg) = resolve_fg_bg_colors(cell);
+/// Converts a [`Cell`] into a [`CellData`] for the beamterm renderer, using theme.
+fn cell_data_with_theme<'a>(cell: &'a Cell, theme: &super::theme::Theme) -> CellData<'a> {
+    let (fg, bg) = resolve_fg_bg_colors_with_theme(cell, theme);
     CellData::new_with_style_bits(cell.symbol(), into_glyph_bits(cell.modifier), fg, bg)
 }
 
